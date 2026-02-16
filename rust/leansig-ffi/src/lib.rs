@@ -1,13 +1,16 @@
 use leansig::signature::SignatureScheme;
+use leansig::MESSAGE_LENGTH;
 use leansig::signature::generalized_xmss::instantiations_poseidon_top_level::lifetime_2_to_the_32::hashing_optimized::SIGTopLevelTargetSumLifetime32Dim64Base8;
 use rand::{SeedableRng,rngs::StdRng};
 use std::ptr;
 use std::slice;
 use ssz::Decode;
+use thiserror::Error;
 
 pub type LeanSignatureScheme = SIGTopLevelTargetSumLifetime32Dim64Base8;
 pub type LeanPublicKey = <LeanSignatureScheme as SignatureScheme>::PublicKey;
 pub type LeanSecretKey = <LeanSignatureScheme as SignatureScheme>::SecretKey;
+pub type LeanSignature = <LeanSignatureScheme as SignatureScheme>::Signature;
 
 pub struct SecretKey {
     pub inner: LeanSecretKey,
@@ -22,6 +25,16 @@ pub struct Keypair {
     pub secret_key: SecretKey,
 }
 
+pub struct Signature {
+    pub inner: LeanSignature,
+}
+
+#[derive(Debug, Error)]
+pub enum SigningError {
+    #[error("Signing failed")]
+    SigningFailed(leansig::signature::SigningError),
+}
+
 impl PublicKey {
     pub fn new(inner: LeanPublicKey) -> Self {
         Self { inner }
@@ -30,6 +43,23 @@ impl PublicKey {
 
 impl SecretKey {
     pub fn new(inner: LeanSecretKey) -> Self {
+        Self { inner }
+    }
+
+    pub fn sign_message(
+        &self,
+        message: &[u8; MESSAGE_LENGTH],
+        epoch: u32,
+    ) -> Result<Signature, SigningError> {
+        Ok(Signature::new(
+            <LeanSignatureScheme as SignatureScheme>::sign(&self.inner, epoch, message)
+                .map_err(SigningError::SigningFailed)?,
+        ))
+    }
+}
+
+impl Signature {
+    fn new(inner: LeanSignature) -> Self {
         Self { inner }
     }
 }
@@ -79,7 +109,7 @@ pub unsafe extern "C" fn leansig_keypair_get_public_key(
 
 // Get a pointer to the secret key from a keypair
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn leansig_keypair_get_private_key(
+pub unsafe extern "C" fn leansig_keypair_get_secret_key(
     keypair: *const Keypair,
 ) -> *const SecretKey {
     if keypair.is_null() {
@@ -120,29 +150,30 @@ pub unsafe extern "C" fn leansig_keypair_from_ssz_bytes(
     public_key_len: usize,
 ) -> *mut Keypair {
     if secret_key_ptr.is_null() || public_key_ptr.is_null() {
-        return ptr::null_mut()
+        return ptr::null_mut();
     }
-    
-    unsafe  {
+
+    unsafe {
         let sk_slice = slice::from_raw_parts(secret_key_ptr, secret_key_len);
         let pk_slice = slice::from_raw_parts(public_key_ptr, public_key_len);
-        
+
         let pk: LeanPublicKey = match LeanPublicKey::from_ssz_bytes(pk_slice) {
             Ok(key) => key,
             Err(_) => return ptr::null_mut(),
         };
-        
-        
+
         let sk: LeanSecretKey = match LeanSecretKey::from_ssz_bytes(sk_slice) {
             Ok(key) => key,
             Err(_) => return ptr::null_mut(),
         };
-        
+
         let keypair = Box::new(Keypair {
             public_key: PublicKey::new(pk),
-            secret_key: SecretKey::new(sk)
+            secret_key: SecretKey::new(sk),
         });
-        
+
         Box::into_raw(keypair)
     }
 }
+
+// Sign a message using a secret key directly
