@@ -178,29 +178,32 @@ pub unsafe extern "C" fn leansig_keypair_from_ssz_bytes(
 
 // Sign a message using a secret key directly
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn leansig_message_signing(secret_key: *const SecretKey, message_ptr: *const u8, epoch: u32) -> *mut Signature {
+pub unsafe extern "C" fn leansig_message_signing(
+    secret_key: *const SecretKey,
+    message_ptr: *const u8,
+    epoch: u32,
+) -> *mut Signature {
     if secret_key.is_null() || message_ptr.is_null() {
-        return ptr::null_mut()
+        return ptr::null_mut();
     }
-    
+
     unsafe {
         let secret_key_ref = &*secret_key;
         let message_slice = slice::from_raw_parts(message_ptr, MESSAGE_LENGTH);
-        
+
         let message_data: &[u8; MESSAGE_LENGTH] = match message_slice.try_into() {
             Ok(msg) => msg,
             Err(_) => return ptr::null_mut(),
         };
-        
+
         let signature = match secret_key_ref.sign_message(message_data, epoch) {
             Ok(sig) => sig,
             Err(_) => return ptr::null_mut(),
         };
-        
+
         Box::into_raw(Box::new(signature))
     }
 }
-
 
 // FFI: Frees a heap-allocated XMSS `Signature`.
 #[unsafe(no_mangle)]
@@ -209,5 +212,26 @@ pub unsafe extern "C" fn leansig_signature_free(signature: *mut Signature) {
         unsafe {
             let _ = Box::from_raw(signature);
         }
+    }
+}
+
+// Construct a signature from SSZ-encoded bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leansig_signature_from_ssz_bytes(
+    sig_ptr: *const u8,
+    sig_len: usize,
+) -> *mut Signature {
+    if sig_ptr.is_null() || sig_len == 0 {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let sig_slice = slice::from_raw_parts(sig_ptr, sig_len);
+        let signature: LeanSignature = match LeanSignature::from_ssz_bytes(sig_slice) {
+            Ok(sig) => sig,
+            Err(_) => return ptr::null_mut(),
+        };
+        
+        Box::into_raw(Box::new(Signature { inner: signature }))
     }
 }
